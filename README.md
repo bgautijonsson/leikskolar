@@ -19,4 +19,4 @@ Mannfjöldagögnin eiga við um mannfjölda þann 1. janúar. Samkvæmt [lýsing
 
 # Varðandi >100% leikskólapláss í Garðabæ
 
-Ég skoðaði líka gögn um leikskólapláss frá [Sambandi Íslenskra Sveitarfélaga](https://www.samband.is) og fékk líka út að svo virðist vera að of mörg pláss eru skráð í Garðabæ miðað við fjölda barna. Ég er búinn að senda póst á SÍS og hlakka til að heyra frá þeim.
+Ég skoðaði líka gögn um leikskólapláss frá [Sambandi Íslenskra Sveitarfélaga](https://www.samband.is) og fékk líka út að svo virðist vera að fleiri leikskólapláss eru skráð í Garðabæ en búa börn þar. Ég er búinn að senda póst á SÍS að spyrja um þetta og hlakka til að heyra frá þeim.
