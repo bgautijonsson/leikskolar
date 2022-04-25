@@ -519,21 +519,21 @@ ggsave(plot = p, filename = here("vidvera_1ars.png"),
 ```{r}
 leiksk_svfel <- read_excel("tenging-leikskolaraa.xlsx", sheet = "Stöðugildi", 
                            range = "F8:X13", col_names = as.character(2002:2020)) |> 
-    mutate(stadur = c("Reykjavíkurborg", 
-                      "Kópavogsbær", 
-                      "Seltjarnarneskaupstaður", 
+    mutate(stadur = c("Reykjavík", 
+                      "Kópavogur", 
+                      "Seltjarnarnes", 
                       "Garðabær", 
-                      "Hafnarfjarðarkaupstaður",
+                      "Hafnarfjörður",
                       "Mosfellsbær")) |> 
     pivot_longer(c(-stadur), names_to = "ar", values_to = "stodugildi") |> 
     inner_join(
         read_excel("tenging-leikskolaraa.xlsx", sheet = "Rekstur", 
                    range = "F8:X13", col_names = as.character(2002:2020)) |> 
-            mutate(stadur = c("Reykjavíkurborg", 
-                              "Kópavogsbær", 
-                              "Seltjarnarneskaupstaður", 
+            mutate(stadur = c("Reykjavík", 
+                              "Kópavogur", 
+                              "Seltjarnarnes", 
                               "Garðabær", 
-                              "Hafnarfjarðarkaupstaður",
+                              "Hafnarfjörður",
                               "Mosfellsbær")) |> 
             pivot_longer(c(-stadur), names_to = "ar", values_to = "rekstur"),
         by = c("stadur", "ar")
@@ -541,11 +541,11 @@ leiksk_svfel <- read_excel("tenging-leikskolaraa.xlsx", sheet = "Stöðugildi",
     inner_join(
         read_excel("tenging-leikskolaraa.xlsx", sheet = 3, 
                    range = "E8:W13", col_names = as.character(2002:2020)) |> 
-            mutate(stadur = c("Reykjavíkurborg", 
-                              "Kópavogsbær", 
-                              "Seltjarnarneskaupstaður", 
+            mutate(stadur = c("Reykjavík", 
+                              "Kópavogur", 
+                              "Seltjarnarnes", 
                               "Garðabær", 
-                              "Hafnarfjarðarkaupstaður",
+                              "Hafnarfjörður",
                               "Mosfellsbær")) |> 
             pivot_longer(c(-stadur), names_to = "ar", values_to = "heilsdagsigildi"),
         by = c("stadur", "ar")
@@ -553,11 +553,11 @@ leiksk_svfel <- read_excel("tenging-leikskolaraa.xlsx", sheet = "Stöðugildi",
     inner_join(
         read_excel("tenging-leikskolaraa.xlsx", sheet = "Fjöldi", 
                    range = "F8:X13", col_names = as.character(2002:2020)) |> 
-            mutate(stadur = c("Reykjavíkurborg", 
-                              "Kópavogsbær", 
-                              "Seltjarnarneskaupstaður", 
+            mutate(stadur = c("Reykjavík", 
+                              "Kópavogur", 
+                              "Seltjarnarnes", 
                               "Garðabær", 
-                              "Hafnarfjarðarkaupstaður",
+                              "Hafnarfjörður",
                               "Mosfellsbær")) |> 
             pivot_longer(c(-stadur), names_to = "ar", values_to = "fjoldi_barna"),
         by = c("stadur", "ar")
@@ -566,28 +566,28 @@ leiksk_svfel <- read_excel("tenging-leikskolaraa.xlsx", sheet = "Stöðugildi",
 
 leiksk_einka <- read_excel("tenging-leikskolaraa.xlsx", sheet = "Stöðugildi", 
                            range = "F24:X27", col_names = as.character(2002:2020)) |> 
-    mutate(stadur = c("Reykjavíkurborg", 
-                      "Kópavogsbær", 
+    mutate(stadur = c("Reykjavík", 
+                      "Kópavogur", 
                       "Garðabær", 
-                      "Hafnarfjarðarkaupstaður")) |> 
+                      "Hafnarfjörður")) |> 
     pivot_longer(c(-stadur), names_to = "ar", values_to = "stodugildi") |> 
     inner_join(
         read_excel("tenging-leikskolaraa.xlsx", sheet = 3, 
                    range = "E23:W26", col_names = as.character(2002:2020)) |> 
-            mutate(stadur = c("Reykjavíkurborg", 
-                              "Kópavogsbær", 
+            mutate(stadur = c("Reykjavík", 
+                              "Kópavogur", 
                               "Garðabær", 
-                              "Hafnarfjarðarkaupstaður")) |> 
+                              "Hafnarfjörður")) |> 
             pivot_longer(c(-stadur), names_to = "ar", values_to = "heilsdagsigildi"),
         by = c("stadur", "ar")
     ) |> 
     full_join(
         read_excel("tenging-leikskolaraa.xlsx", sheet = "Fjöldi", 
                    range = "F23:X27", col_names = as.character(2002:2020)) |> 
-            mutate(stadur = c("Reykjavíkurborg", 
-                              "Kópavogsbær", 
+            mutate(stadur = c("Reykjavík", 
+                              "Kópavogur", 
                               "Garðabær", 
-                              "Hafnarfjarðarkaupstaður",
+                              "Hafnarfjörður",
                               "Mosfellsbær")) |> 
             pivot_longer(c(-stadur), names_to = "ar", values_to = "fjoldi_barna"),
         by = c("stadur", "ar")
@@ -621,6 +621,8 @@ p <- leiksk |>
     theme(legend.position = "none") +
     labs(x = NULL, y = NULL,
          title = "Heilsdagsígildi (börn) á hvert stöðugildi (starfsfólk) í leikskólum á höfuðborgarsvæðinu frá 2002 til 2020")
+
+p
 
 ggsave(plot = p, filename = "born_per_stodugildi.png",
        width = 8, height = 0.5 * 8, scale = 2, bg = "white")
