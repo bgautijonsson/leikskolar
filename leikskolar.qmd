@@ -620,7 +620,9 @@ p <- leiksk |>
     theme_cowplot() +
     theme(legend.position = "none") +
     labs(x = NULL, y = NULL,
-         title = "Heilsdagsígildi (börn) á hvert stöðugildi (starfsfólk) í leikskólum á höfuðborgarsvæðinu frá 2002 til 2020")
+         title = "Heilsdagsígildi (börn) á hvert stöðugildi (starfsfólk) í leikskólum á höfuðborgarsvæðinu frá 2002 til 2020",
+         subtitle = "Eitt heilsdagsígildi = barn sem er 7 klst. eða lengur í leikskólanum á dag",
+         caption = "Kóði og gögn: https://github.com/bgautijonsson/leikskolar")
 
 p
 
