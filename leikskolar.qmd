@@ -1,0 +1,508 @@
+---
+title: ""
+author: 
+    -   name: "Brynjólfur Gauti Guðrúnar Jónsson"
+        url: "https://twitter.com/bgautijonsson"
+        affiliation: "Tölfræði, Raunvísindadeild Háskóla Íslands"
+        affiliation-url: "https://www.hi.is/tolfraedi_0"
+date: today
+format: 
+    html:
+        code-fold: true
+        toc: true
+        toc-location: right
+        toc-title: Efnisyfirlit
+editor: source
+theme: flatly
+title-block-banner: true
+standalone: true
+self-contained: true
+---
+
+
+```{r}
+#| include: false
+
+library(cowplot)
+library(tidyverse)
+library(scales)
+library(pxweb)
+library(ggthemes)
+library(kableExtra)
+library(gganimate)
+library(lubridate)
+library(geomtextpath)
+library(ggtext)
+library(here)
+```
+
+# Eftir bæjarfélagi
+
+```{r}
+d <- pxweb_get(
+    url ="https://px.hagstofa.is:443/pxis/api/v1/is/Samfelag/skolamal/1_leikskolastig/0_lsNemendur/SKO01000.px", 
+    query = list(
+        "Leikskóli" = c("*"),
+        "Ár" = c("*"),
+        "Kyn/aldur"  = c("First year", "1 years", "2 years", "3 years", "4 years", "5 years")
+    ),
+    verbose = FALSE
+) |> 
+    as.data.frame() |> 
+    as_tibble() |> 
+    janitor::clean_names() |> 
+    rename(n = born_og_leikskolar_i_desember_1998_2020, aldur = kyn_aldur) |> 
+    filter(leikskoli != "Alls") |> 
+    separate(leikskoli, into = c("stadur", "leikskoli"), sep = " - ") |> 
+    mutate(stadur = case_when(str_detect(stadur, "Reykjavík") ~ "Reykjavík",
+                              TRUE ~ stadur)) |> 
+    filter(stadur %in% c("Reykjavík", "Kópavogur", "Hafnarfjörður", "Garðabær", "Mosfellsbær", "Seltjarnarnes")) |> 
+    mutate(ar = parse_number(ar),
+           aldur = as_factor(aldur) |> fct_relevel("Á fyrsta ári")) |> 
+    count(stadur, ar, aldur, wt = n)
+
+mannfjoldi <- pxweb_get(
+    url ="https://px.hagstofa.is:443/pxis/api/v1/is/Ibuar/mannfjoldi/2_byggdir/Byggdakjarnar/MAN030101.px", 
+    query = list(
+        "Byggðakjarnar" = c("*"),
+        "Aldur" = as.character(0:5),
+        "Ár" = c("*"),
+        "Kyn" = c("Alls")
+    ),
+    verbose = FALSE
+) |> 
+    as.data.frame() |> 
+    as_tibble() |> 
+    janitor::clean_names()
+```
+
+
+```{r, fig.width = 12, fig.asp = 1, out.width = "100%"}
+plot_dat <- mannfjoldi |> 
+    rename(mannfjoldi = mannfjoldi_eftir_byggdakjornum_kyni_og_aldri_1_januar_2001_2022,
+           stadur = byggdakjarnar) |> 
+    mutate(aldur = str_replace(aldur, "Á 1. ári", "Á fyrsta ári"),
+           ar = parse_number(ar) - 1) |> 
+    select(-kyn) |> 
+    inner_join(d, 
+              by = c("stadur", "ar", "aldur")) |> 
+    mutate(hlutf = n / mannfjoldi,
+           aldur = as_factor(aldur) |> fct_relevel("Á fyrsta ári")) |> 
+    filter(aldur != "Á fyrsta ári")
+
+p <- plot_dat |> 
+    ggplot(aes(ar, hlutf)) +
+    geom_line(data = plot_dat |> rename(std = stadur), aes(group = std), alpha = 0.5) +
+    geom_line(aes(col = stadur), size = 1.5) +
+    geom_hline(yintercept = 1, lty = 2) +
+    scale_x_continuous(breaks = c(2005, 2010, 2015, 2020)) +
+    scale_y_continuous(labels = label_percent(),
+                       breaks = c(0, 0.25, 0.5, 0.75, 1)) +
+    scale_colour_brewer(type = "qual", palette = "Set1") +
+    facet_grid(aldur ~ stadur) +
+    coord_cartesian(expand = FALSE) +
+    theme_half_open() +
+    theme(legend.position = "none") +
+    labs(x = NULL,
+         y = NULL,
+         title = "Hlutfall barna með leikskólapláss eftir aldri",
+         subtitle = "Reiknað sem fjöldi barna í leikskóla deilt með fjölda barna í viðeigandi árgangi",
+         caption = "Kóði og gögn: https://github.com/bgautijonsson/leikskolar")
+
+p
+
+ggsave(plot = p, filename = "hlutfall_baer_aldur.png",
+       height = 8, width = 8, scale = 2, bg = "white")
+```
+
+# Reykjavík vs. önnur bæjarfélög á höfuðborgarsvæði
+
+```{r}
+d1 <- pxweb_get(
+    url ="https://px.hagstofa.is:443/pxis/api/v1/is/Samfelag/skolamal/1_leikskolastig/0_lsNemendur/SKO01101.px", 
+    query = list(
+        "Ár" = c("*"),
+        "Fjöldi"  = c("*"),
+        "Landsvæði" = c("1", "2", "3"),
+        "Kyn" = c("0"),
+        "Aldur" = c("*")
+    ),
+    verbose = FALSE
+) |> 
+    as.data.frame() |> 
+    as_tibble() |> 
+    janitor::clean_names() |> 
+    filter(aldur != "Alls") |> 
+    rename(value = born_i_leikskolum_eftir_aldri_kyni_og_landsvaedum_1998_2020) |> 
+    mutate(ar = parse_number(ar),
+           aldur = ifelse(str_detect(aldur, "Á fy"), "0", aldur) |> parse_number()) |> 
+    select(-kyn) 
+```
+
+
+```{r}
+d2 <- pxweb_get(
+    url ="https://px.hagstofa.is:443/pxis/api/v1/is/Samfelag/skolamal/1_leikskolastig/0_lsNemendur/SKO01102.px", 
+    query = list(
+        "Ár" = c("*"),
+        "Viðvera"  = c("*"),
+        "Landsvæði" = c("1", "2", "3"),
+        "Kyn" = c("0"),
+        "Aldur" = c("*")
+    ),
+    verbose = FALSE
+) |> 
+    as.data.frame() |> 
+    as_tibble() |> 
+    janitor::clean_names() |> 
+    filter(aldur != "Alls") |> 
+    rename(value = born_i_leikskolum_eftir_kyni_aldri_landsvaedum_og_lengd_vidveru_1998_2040) |> 
+    mutate(ar = parse_number(ar),
+           aldur = ifelse(str_detect(aldur, "Á fy"), "0", aldur) |> parse_number()) |> 
+    select(-kyn) |> 
+    pivot_wider(names_from = vidvera, values_from = value) |> 
+    janitor::clean_names() |> 
+    pivot_longer(c(-ar, -landsvaedi, -aldur, -alls), names_to = "vidvera") |> 
+    mutate(vidvera = parse_number(vidvera)) |> 
+    group_by(ar,landsvaedi, aldur) |> 
+    mutate(alls2 = sum(value),
+           hlutf = value / alls2) |> 
+    ungroup() |> 
+    select(ar, landsvaedi,  aldur, vidvera, hlutf) |> 
+    arrange(desc(ar), aldur, landsvaedi, vidvera)
+```
+
+## Öll börn
+
+### Hlutfall á leikskólaaldri með pláss
+
+```{r,  fig.width = 8, fig.asp = 0.5, out.width = "100%"}
+p <- d1 |> 
+    filter(aldur > 0, landsvaedi != "Höfuðborgarsvæði") |> 
+    pivot_wider(names_from = fjoldi, values_from = value) |> 
+    janitor::clean_names() |> 
+    mutate(staerd_argangs = fjoldi / (hlutfall_af_argangi / 100)) |> 
+    group_by(ar, landsvaedi) |> 
+    summarise(hlutf = sum(fjoldi) / sum(staerd_argangs) * 100,
+              .groups = "drop") |> 
+    ggplot(aes(ar, hlutf, fill = landsvaedi)) +
+    geom_area(position = "identity", alpha = 0.6) +
+    scale_y_continuous(labels = label_number(suffix = "%"),
+                       limits = c(0, 100)) +
+    scale_fill_brewer(type ="qual", palette = "Set1") +
+    coord_cartesian(expand = FALSE) +
+    theme_half_open() +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         lty = NULL,
+         col = NULL,
+         title = "Hlutfall barna á leikskólaaldri sem hafa leikskólapláss í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>",
+         subtitle = "Reiknað sem fjöldi leikskólaplássa deilt með fjölda barna 1 - 5 ára.") +
+    theme(legend.position = "none",
+          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
+          plot.title = element_markdown())
+
+p
+
+ggsave(plot = p, filename = here("hlutfall_alls.png"),
+       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+```
+
+### Fjöldi leikskólaplássa
+
+```{r,  fig.width = 8, fig.asp = 0.5, out.width = "100%"}
+p <- d1 |> 
+    filter(fjoldi == "Fjöldi", landsvaedi != "Höfuðborgarsvæði") |> 
+    count(ar, landsvaedi, wt = value) |> 
+    mutate(landsvaedi = fct_relevel(landsvaedi, "Reykjavík")) |> 
+    ggplot(aes(ar, n, fill = landsvaedi)) +
+    geom_area(position = "identity", alpha = 0.5) +
+    scale_fill_brewer(type ="qual", palette = "Set1", direction = -1) +
+    coord_cartesian(expand = FALSE) +
+    theme_half_open() +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         lty = NULL,
+         col = NULL,
+         title = "Fjöldi plássa í leikskólum í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>") +
+    theme(legend.position = "none",
+          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
+          plot.title = element_markdown())
+
+p
+
+ggsave(plot = p, filename = here("fjoldi_plass_alls.png"),
+       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+```
+
+### Fjöldi á leikskólaaldri
+
+```{r, fig.width = 8, fig.asp = 0.5, out.width = "100%"}
+p <- d1 |> 
+    filter(aldur > 0, landsvaedi != "Höfuðborgarsvæði") |> 
+    pivot_wider(names_from = fjoldi, values_from = value) |> 
+    janitor::clean_names() |> 
+    mutate(staerd_argangs = fjoldi / (hlutfall_af_argangi / 100)) |> 
+    count(ar, landsvaedi, wt = staerd_argangs) |> 
+    mutate(landsvaedi = fct_relevel(landsvaedi, "Reykjavík")) |> 
+    ggplot(aes(ar, n, fill = landsvaedi)) +
+    geom_area(position = "identity", alpha = 0.5) +
+    scale_fill_brewer(type ="qual", palette = "Set1", direction = -1) +
+    coord_cartesian(expand = FALSE) +
+    theme_half_open() +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         lty = NULL,
+         col = NULL,
+         title = "Fjöldi barna á leikskólaaldri í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>") +
+    theme(legend.position = "none",
+          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
+          plot.title = element_markdown())
+
+p
+
+ggsave(plot = p, filename = here("fjoldi_aldri_alls.png"),
+       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+
+```
+
+### Viðvera
+
+#### Per barn í árgangi
+
+```{r, fig.width = 8, fig.asp = 0.5, out.width = "100%"}
+p <- d2 |> 
+    group_by(ar, landsvaedi, aldur) |> 
+    summarise(vidvera = sum(vidvera * hlutf),
+              .groups = "drop") |> 
+    inner_join(
+        d1 |> 
+            pivot_wider(names_from = fjoldi, values_from = value) |> 
+            janitor::clean_names() |> 
+            mutate(fjoldi = fjoldi / (hlutfall_af_argangi/100)),
+        by = c("ar", "landsvaedi", "aldur")
+    ) |> 
+    filter(is.finite(fjoldi)) |> 
+    group_by(ar,landsvaedi) |> 
+    mutate(p_vidvera = vidvera * fjoldi / sum(fjoldi)) |> 
+    filter(is.finite(p_vidvera)) |> 
+    summarise(mean_vidvera = sum(p_vidvera),
+              .groups ="drop") |> 
+    filter(landsvaedi!= "Höfuðborgarsvæði") |> 
+    ggplot(aes(ar, mean_vidvera, fill = landsvaedi)) +
+    geom_area(position = "identity", alpha = 0.5) +
+    scale_y_continuous(labels = label_number(suffix = " klst"),
+                       limits = c(0, NA)) +
+    scale_fill_brewer(type ="qual", palette = "Set1") +
+    coord_cartesian(expand = FALSE) +
+    theme_half_open() +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         lty = NULL,
+         col = NULL,
+         title = "Viðvera í leikskóla á dag per barn á leikskólaaldri í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>") +
+    theme(legend.position = "none",
+          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
+          plot.title = element_markdown())
+
+p
+
+ggsave(plot = p, filename = here("vidvera_argangur_alls.png"),
+       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+```
+
+#### Per barn á leikskóla
+
+```{r, fig.width = 8, fig.asp = 0.5, out.width = "100%"}
+p <- d2 |> 
+    group_by(ar, landsvaedi, aldur) |> 
+    summarise(vidvera = sum(vidvera * hlutf),
+              .groups = "drop") |> 
+    inner_join(
+        d1 |> 
+            pivot_wider(names_from = fjoldi, values_from = value) |> 
+            janitor::clean_names(),
+        by = c("ar", "landsvaedi", "aldur")
+    ) |> 
+    group_by(ar,landsvaedi) |> 
+    mutate(p_vidvera = vidvera * fjoldi / sum(fjoldi)) |> 
+    filter(is.finite(p_vidvera)) |> 
+    summarise(mean_vidvera = sum(p_vidvera),
+              .groups ="drop") |> 
+    filter(landsvaedi!= "Höfuðborgarsvæði") |> 
+    ggplot(aes(ar, mean_vidvera, fill = landsvaedi)) +
+    geom_area(position = "identity", alpha = 0.5) +
+    scale_y_continuous(labels = label_number(suffix = " klst"),
+                       limits = c(0, NA)) +
+    scale_fill_brewer(type ="qual", palette = "Set1") +
+    coord_cartesian(expand = FALSE) +
+    theme_half_open() +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         lty = NULL,
+         col = NULL,
+         title = "Meðalviðvera barns með leikskólapláss í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>") +
+    theme(legend.position = "none",
+          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
+          plot.title = element_markdown())
+
+p
+
+ggsave(plot = p, filename = here("vidvera_leikskola_alls.png"),
+       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+```
+
+### Hlutfall með pláss eftir árgangi
+
+```{r, fig.width = 8,fig.asp = 0.5, out.width = "100%"}
+p <- d1 |> 
+    filter(fjoldi !="Fjöldi", landsvaedi != "Höfuðborgarsvæði",
+           ar >= 2000) |> 
+    mutate(aldur = case_when(aldur == 0 ~ "Á 1. ári",
+                             aldur == 1 ~ "1 árs",
+                             TRUE ~ str_c(aldur, " ára")) |> 
+               fct_relevel("Á 1. ári")) |> 
+    ggplot(aes(ar, value)) +
+    geom_area(aes(fill = landsvaedi), 
+              position = position_dodge(width = 0), alpha = 0.5) +
+    scale_y_continuous(limits = c(0, 100), 
+                       labels = label_number(suffix = "%"),
+                       expand = expansion()) +
+    scale_x_continuous(breaks = pretty_breaks(5),
+                       expand = expansion()) +
+    scale_fill_brewer(type = "qual", palette = "Set1") +
+    scale_colour_brewer(type = "qual", palette = "Set1") +
+    facet_wrap("aldur", scales = "free_y") +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         lty = NULL,
+         col = NULL,
+         title = "Hlutfall barna með leikskólapláss í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b> eftir aldri") +
+    theme_clean() +
+    background_grid(major  = "none" )+
+    theme(legend.position = "none",
+          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
+          plot.title = element_markdown(),
+          strip.background = element_rect(fill = "grey90"))
+
+p
+
+ggsave(plot = p, filename = here("hlutfall_saman.png"),
+       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+```
+
+## 12 - 24 mánaða börn
+
+### Fjöldi barna í leikskóla
+
+```{r, fig.width = 8,fig.asp = 0.5, out.width = "100%"}
+p <- d1 |> 
+    filter(landsvaedi != "Höfuðborgarsvæði",
+           ar >= 2000, aldur == 1) |> 
+    pivot_wider(names_from = fjoldi, values_from = value) |> 
+    janitor::clean_names() |> 
+    mutate(bidlisti = fjoldi / (hlutfall_af_argangi/100) - fjoldi,
+           landsvaedi = fct_relevel(landsvaedi, "Reykjavík")) |> 
+    ggplot(aes(ar, fjoldi)) +
+    geom_area(aes(fill = landsvaedi), 
+              position = position_dodge(width = 0), alpha = 0.5) +
+    scale_y_continuous(limits = c(0, NA), 
+                       labels = label_number(suffix = ""),
+                       expand = expansion()) +
+    scale_x_continuous(breaks = pretty_breaks(5),
+                       expand = expansion()) +
+    scale_fill_brewer(type = "qual", palette = "Set1", direction = -1) +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         lty = NULL,
+         col = NULL,
+         title = "Fjöldi eins árs barna í leikskólum í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>") +
+    theme_half_open() +
+    theme(legend.position = "none",
+          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
+          plot.title = element_markdown())
+
+p
+
+ggsave(plot = p, filename = here("fjoldi_1ars.png"),
+       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+```
+
+### Hlutfall í leikskóla
+
+```{r, fig.width = 8,fig.asp = 0.5, out.width = "100%"}
+p  <- d1 |> 
+    filter(fjoldi !="Fjöldi", landsvaedi != "Höfuðborgarsvæði",
+           ar >= 2000, aldur == 1) |> 
+    ggplot(aes(ar, value)) +
+    geom_area(aes(fill = landsvaedi), 
+              position = position_dodge(width = 0), alpha = 0.5) +
+    scale_y_continuous(limits = c(0, 60), 
+                       labels = label_number(suffix = "%"),
+                       expand = expansion()) +
+    scale_x_continuous(breaks = pretty_breaks(5),
+                       expand = expansion()) +
+    scale_fill_brewer(type = "qual", palette = "Set1") +
+    scale_colour_brewer(type = "qual", palette = "Set1") +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         lty = NULL,
+         col = NULL,
+         title = "Hlutfall eins árs barna með leikskólapláss í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>") +
+    theme_half_open() +
+    theme(legend.position = "none",
+          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
+          plot.title = element_markdown())
+
+p
+
+ggsave(plot = p, filename = here("hlutfall_1ars.png"),
+       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+```
+
+### Viðvera per barn í árgangi
+
+```{r, fig.width = 8, fig.asp = 0.5, out.width = "100%"}
+p <- d2 |> 
+    group_by(ar, landsvaedi, aldur) |> 
+    summarise(vidvera = sum(vidvera * hlutf),
+              .groups = "drop") |> 
+    inner_join(
+        d1 |> 
+            pivot_wider(names_from = fjoldi, values_from = value) |> 
+            janitor::clean_names(),
+        by = c("ar", "landsvaedi", "aldur")
+    ) |> 
+    mutate(vidvera_hlutf = vidvera * hlutfall_af_argangi / 100) |> 
+    filter(landsvaedi!= "Höfuðborgarsvæði", aldur == 1) |> 
+    ggplot(aes(ar, vidvera_hlutf, fill = landsvaedi)) +
+    geom_area(position = "identity", alpha = 0.5) +
+    scale_y_continuous(labels = label_number(suffix = " klst"),
+                       limits = c(0, 8)) +
+    scale_fill_brewer(type ="qual", palette = "Set1") +
+    coord_cartesian(expand = FALSE) +
+    theme_half_open() +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         lty = NULL,
+         col = NULL,
+         title = "Viðvera á dag per barn í árgangi (12-24 mánaða) í leikskólum í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>",
+         subtitle = "Meðalbarn utan Reykjavíkur var að jafnaði 30 mín lengra í leikskóla en meðalbarn innan Reykjavíkur árið 2020 (að því gefnu að leikskólaviðvera væri jafndreifð yfir öll börn).") +
+    theme(legend.position = "none",
+          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
+          plot.title = element_markdown())
+
+p
+
+ggsave(plot = p, filename = here("vidvera_1ars.png"),
+       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+```
