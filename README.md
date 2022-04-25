@@ -16,6 +16,9 @@ Mannfjöldagögnin eiga við um mannfjölda þann 1. janúar. Samkvæmt [lýsing
 
 [Börn í leikskólum eftir kyni, aldri, landsvæðum og lengd viðveru 1998-2020](https://px.hagstofa.is/pxis/pxweb/is/Samfelag/Samfelag__skolamal__1_leikskolastig__0_lsNemendur/SKO01102.px)
 
+Úrvinnslan um dagsígildi per stöðugildi á leikskólum notar gögn frá [Sambandi Íslenskra Sveitarfélaga](https://www.samband.is) sem má finna hér:
+
+[Hlekkurinn á síðunni heitir Leikskólar undir Rekstur leikskóla, en skráin heitir tenging-leikskolaara.xlsx](https://www.samband.is/verkefnin/fjarmal/talnaefni/rekstur-leik--og-grunnskola/)
 
 # Varðandi >100% leikskólapláss í Garðabæ
 

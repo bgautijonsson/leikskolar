@@ -34,9 +34,12 @@ library(lubridate)
 library(geomtextpath)
 library(ggtext)
 library(here)
+library(readxl)
 ```
 
-# Eftir bæjarfélagi
+# Fjöldi leikskólaplássa
+
+## Eftir bæjarfélagi
 
 ```{r}
 d <- pxweb_get(
@@ -85,7 +88,7 @@ plot_dat <- mannfjoldi |>
            ar = parse_number(ar) - 1) |> 
     select(-kyn) |> 
     inner_join(d, 
-              by = c("stadur", "ar", "aldur")) |> 
+               by = c("stadur", "ar", "aldur")) |> 
     mutate(hlutf = n / mannfjoldi,
            aldur = as_factor(aldur) |> fct_relevel("Á fyrsta ári")) |> 
     filter(aldur != "Á fyrsta ári")
@@ -93,11 +96,14 @@ plot_dat <- mannfjoldi |>
 p <- plot_dat |> 
     ggplot(aes(ar, hlutf)) +
     geom_line(data = plot_dat |> rename(std = stadur), aes(group = std), alpha = 0.5) +
-    geom_line(aes(col = stadur), size = 1.5) +
+    geom_line(aes(col = stadur), size = 1) +
+    geom_point(aes(col = stadur), size = 2) +
     geom_hline(yintercept = 1, lty = 2) +
-    scale_x_continuous(breaks = c(2005, 2010, 2015, 2020)) +
+    scale_x_continuous(breaks = c(2005, 2010, 2015, 2020),
+                       limits = c(2000, 2020.5)) +
     scale_y_continuous(labels = label_percent(),
-                       breaks = c(0, 0.25, 0.5, 0.75, 1)) +
+                       breaks = c(0, 0.25, 0.5, 0.75, 1),
+                       limits = c(0, 1.3)) +
     scale_colour_brewer(type = "qual", palette = "Set1") +
     facet_grid(aldur ~ stadur) +
     coord_cartesian(expand = FALSE) +
@@ -115,7 +121,7 @@ ggsave(plot = p, filename = "hlutfall_baer_aldur.png",
        height = 8, width = 8, scale = 2, bg = "white")
 ```
 
-# Reykjavík vs. önnur bæjarfélög á höfuðborgarsvæði
+## Reykjavík vs. önnur bæjarfélög á höfuðborgarsvæði
 
 ```{r}
 d1 <- pxweb_get(
@@ -172,9 +178,9 @@ d2 <- pxweb_get(
     arrange(desc(ar), aldur, landsvaedi, vidvera)
 ```
 
-## Öll börn
+### Öll börn
 
-### Hlutfall á leikskólaaldri með pláss
+#### Hlutfall á leikskólaaldri með pláss
 
 ```{r,  fig.width = 8, fig.asp = 0.5, out.width = "100%"}
 p <- d1 |> 
@@ -209,7 +215,7 @@ ggsave(plot = p, filename = here("hlutfall_alls.png"),
        width = 8, height = 0.5 * 8, scale = 2, bg = "white")
 ```
 
-### Fjöldi leikskólaplássa
+#### Fjöldi leikskólaplássa
 
 ```{r,  fig.width = 8, fig.asp = 0.5, out.width = "100%"}
 p <- d1 |> 
@@ -237,7 +243,7 @@ ggsave(plot = p, filename = here("fjoldi_plass_alls.png"),
        width = 8, height = 0.5 * 8, scale = 2, bg = "white")
 ```
 
-### Fjöldi á leikskólaaldri
+#### Fjöldi á leikskólaaldri
 
 ```{r, fig.width = 8, fig.asp = 0.5, out.width = "100%"}
 p <- d1 |> 
@@ -269,9 +275,9 @@ ggsave(plot = p, filename = here("fjoldi_aldri_alls.png"),
 
 ```
 
-### Viðvera
+#### Viðvera
 
-#### Per barn í árgangi
+##### Per barn í árgangi
 
 ```{r, fig.width = 8, fig.asp = 0.5, out.width = "100%"}
 p <- d2 |> 
@@ -315,7 +321,7 @@ ggsave(plot = p, filename = here("vidvera_argangur_alls.png"),
        width = 8, height = 0.5 * 8, scale = 2, bg = "white")
 ```
 
-#### Per barn á leikskóla
+##### Per barn á leikskóla
 
 ```{r, fig.width = 8, fig.asp = 0.5, out.width = "100%"}
 p <- d2 |> 
@@ -357,7 +363,7 @@ ggsave(plot = p, filename = here("vidvera_leikskola_alls.png"),
        width = 8, height = 0.5 * 8, scale = 2, bg = "white")
 ```
 
-### Hlutfall með pláss eftir árgangi
+#### Hlutfall með pláss eftir árgangi
 
 ```{r, fig.width = 8,fig.asp = 0.5, out.width = "100%"}
 p <- d1 |> 
@@ -397,9 +403,9 @@ ggsave(plot = p, filename = here("hlutfall_saman.png"),
        width = 8, height = 0.5 * 8, scale = 2, bg = "white")
 ```
 
-## 12 - 24 mánaða börn
+### 12 - 24 mánaða börn
 
-### Fjöldi barna í leikskóla
+#### Fjöldi barna í leikskóla
 
 ```{r, fig.width = 8,fig.asp = 0.5, out.width = "100%"}
 p <- d1 |> 
@@ -435,7 +441,7 @@ ggsave(plot = p, filename = here("fjoldi_1ars.png"),
        width = 8, height = 0.5 * 8, scale = 2, bg = "white")
 ```
 
-### Hlutfall í leikskóla
+#### Hlutfall í leikskóla
 
 ```{r, fig.width = 8,fig.asp = 0.5, out.width = "100%"}
 p  <- d1 |> 
@@ -468,7 +474,7 @@ ggsave(plot = p, filename = here("hlutfall_1ars.png"),
        width = 8, height = 0.5 * 8, scale = 2, bg = "white")
 ```
 
-### Viðvera per barn í árgangi
+#### Viðvera per barn í árgangi
 
 ```{r, fig.width = 8, fig.asp = 0.5, out.width = "100%"}
 p <- d2 |> 
@@ -504,5 +510,118 @@ p <- d2 |>
 p
 
 ggsave(plot = p, filename = here("vidvera_1ars.png"),
+       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+```
+
+
+# Stöðugildi osf
+
+```{r}
+leiksk_svfel <- read_excel("tenging-leikskolaraa.xlsx", sheet = "Stöðugildi", 
+                           range = "F8:X13", col_names = as.character(2002:2020)) |> 
+    mutate(stadur = c("Reykjavíkurborg", 
+                      "Kópavogsbær", 
+                      "Seltjarnarneskaupstaður", 
+                      "Garðabær", 
+                      "Hafnarfjarðarkaupstaður",
+                      "Mosfellsbær")) |> 
+    pivot_longer(c(-stadur), names_to = "ar", values_to = "stodugildi") |> 
+    inner_join(
+        read_excel("tenging-leikskolaraa.xlsx", sheet = "Rekstur", 
+                   range = "F8:X13", col_names = as.character(2002:2020)) |> 
+            mutate(stadur = c("Reykjavíkurborg", 
+                              "Kópavogsbær", 
+                              "Seltjarnarneskaupstaður", 
+                              "Garðabær", 
+                              "Hafnarfjarðarkaupstaður",
+                              "Mosfellsbær")) |> 
+            pivot_longer(c(-stadur), names_to = "ar", values_to = "rekstur"),
+        by = c("stadur", "ar")
+    ) |> 
+    inner_join(
+        read_excel("tenging-leikskolaraa.xlsx", sheet = 3, 
+                   range = "E8:W13", col_names = as.character(2002:2020)) |> 
+            mutate(stadur = c("Reykjavíkurborg", 
+                              "Kópavogsbær", 
+                              "Seltjarnarneskaupstaður", 
+                              "Garðabær", 
+                              "Hafnarfjarðarkaupstaður",
+                              "Mosfellsbær")) |> 
+            pivot_longer(c(-stadur), names_to = "ar", values_to = "heilsdagsigildi"),
+        by = c("stadur", "ar")
+    ) |> 
+    inner_join(
+        read_excel("tenging-leikskolaraa.xlsx", sheet = "Fjöldi", 
+                   range = "F8:X13", col_names = as.character(2002:2020)) |> 
+            mutate(stadur = c("Reykjavíkurborg", 
+                              "Kópavogsbær", 
+                              "Seltjarnarneskaupstaður", 
+                              "Garðabær", 
+                              "Hafnarfjarðarkaupstaður",
+                              "Mosfellsbær")) |> 
+            pivot_longer(c(-stadur), names_to = "ar", values_to = "fjoldi_barna"),
+        by = c("stadur", "ar")
+    ) |> 
+    mutate(ar = parse_number(ar))
+
+leiksk_einka <- read_excel("tenging-leikskolaraa.xlsx", sheet = "Stöðugildi", 
+                           range = "F24:X27", col_names = as.character(2002:2020)) |> 
+    mutate(stadur = c("Reykjavíkurborg", 
+                      "Kópavogsbær", 
+                      "Garðabær", 
+                      "Hafnarfjarðarkaupstaður")) |> 
+    pivot_longer(c(-stadur), names_to = "ar", values_to = "stodugildi") |> 
+    inner_join(
+        read_excel("tenging-leikskolaraa.xlsx", sheet = 3, 
+                   range = "E23:W26", col_names = as.character(2002:2020)) |> 
+            mutate(stadur = c("Reykjavíkurborg", 
+                              "Kópavogsbær", 
+                              "Garðabær", 
+                              "Hafnarfjarðarkaupstaður")) |> 
+            pivot_longer(c(-stadur), names_to = "ar", values_to = "heilsdagsigildi"),
+        by = c("stadur", "ar")
+    ) |> 
+    full_join(
+        read_excel("tenging-leikskolaraa.xlsx", sheet = "Fjöldi", 
+                   range = "F23:X27", col_names = as.character(2002:2020)) |> 
+            mutate(stadur = c("Reykjavíkurborg", 
+                              "Kópavogsbær", 
+                              "Garðabær", 
+                              "Hafnarfjarðarkaupstaður",
+                              "Mosfellsbær")) |> 
+            pivot_longer(c(-stadur), names_to = "ar", values_to = "fjoldi_barna"),
+        by = c("stadur", "ar")
+    ) |> 
+    mutate(ar = parse_number(ar)) |> 
+    replace_na(list(fjoldi_barna = 0))
+```
+
+```{r, fig.asp = 0.5, fig.width=13}
+leiksk <- leiksk_svfel |> 
+    mutate(born_per_igildi = heilsdagsigildi / stodugildi,
+           teg = "Sveitarfélag") |> 
+    select(stadur, ar, teg, born_per_igildi) |> 
+    bind_rows(
+        leiksk_einka |> 
+            mutate(born_per_igildi = heilsdagsigildi / stodugildi,
+                   teg = "Einkarekinn") |> 
+            select(stadur, ar, teg, born_per_igildi)
+    )
+
+p <- leiksk |> 
+    ggplot(aes(ar, born_per_igildi, col = stadur, group = stadur)) +
+    geom_line(data = leiksk |> rename(std = stadur, tg = teg), inherit.aes = FALSE,
+              aes(x = ar, y = born_per_igildi, group = paste(std, tg)), col = "grey") +
+    geom_line(size = 1) +
+    geom_point(size = 2) +
+    scale_x_continuous() +
+    scale_colour_brewer(type = "qual", palette = "Set1") +
+    facet_grid(teg ~ stadur) +
+    theme_cowplot() +
+    theme(legend.position = "none") +
+    labs(x = NULL, y = NULL,
+         title = "Heilsdagsígildi (börn) á hvert stöðugildi (starfsfólk) í leikskólum á höfuðborgarsvæðinu frá 2002 til 2020")
+
+ggsave(plot = p, filename = "born_per_stodugildi.png",
        width = 8, height = 0.5 * 8, scale = 2, bg = "white")
 ```
