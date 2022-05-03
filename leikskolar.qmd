@@ -35,11 +35,12 @@ library(geomtextpath)
 library(ggtext)
 library(here)
 library(readxl)
+library(mgcv)
+library(emmeans)
+library(broom)
 ```
 
-# Fjöldi leikskólaplássa
-
-## Eftir bæjarfélagi
+# Gögn
 
 ```{r}
 d <- pxweb_get(
@@ -59,52 +60,79 @@ d <- pxweb_get(
     separate(leikskoli, into = c("stadur", "leikskoli"), sep = " - ") |> 
     mutate(stadur = case_when(str_detect(stadur, "Reykjavík") ~ "Reykjavík",
                               TRUE ~ stadur)) |> 
-    filter(stadur %in% c("Reykjavík", "Kópavogur", "Hafnarfjörður", "Garðabær", "Mosfellsbær", "Seltjarnarnes")) |> 
+    filter(stadur %in% c("Reykjavík", "Kópavogur", "Hafnarfjörður",
+                         "Garðabær", "Mosfellsbær", "Seltjarnarnes",
+                         "Fjarðabyggð", "Akureyri", "Sveitarfélagið Álftanes")) |> 
     mutate(ar = parse_number(ar),
-           aldur = as_factor(aldur) |> fct_relevel("Á fyrsta ári")) |> 
+           aldur = as_factor(aldur) |> fct_relevel("Á fyrsta ári"),
+           stadur = fct_collapse(stadur,
+                                 "Reykjavíkurborg" = "Reykjavík",
+                                 "Kópavogsbær" = "Kópavogur",
+                                 "Hafnarfjarðarkaupstaður" = "Hafnarfjörður",
+                                 "Seltjarnarnesbær" = "Seltjarnarnes",
+                                 "Akureyrarbær" = "Akureyri",
+                                 "Garðabær" = c("Sveitarfélagið Álftanes", "Garðabær"),
+                                 "Akureyri" = "Akureyri",
+                                 "Mosfellsbær" = "Mosfellsbær")) |> 
     count(stadur, ar, aldur, wt = n)
 
 mannfjoldi <- pxweb_get(
-    url ="https://px.hagstofa.is:443/pxis/api/v1/is/Ibuar/mannfjoldi/2_byggdir/Byggdakjarnar/MAN030101.px", 
+    url ="https://px.hagstofa.is:443/pxis/api/v1/is/Ibuar/mannfjoldi/2_byggdir/sveitarfelog/MAN02005.px", 
     query = list(
-        "Byggðakjarnar" = c("*"),
+        "Sveitarfélag" = c("*"),
         "Aldur" = as.character(0:5),
         "Ár" = c("*"),
-        "Kyn" = c("Alls")
+        "Kyn" = c("0")
     ),
     verbose = FALSE
 ) |> 
     as.data.frame() |> 
     as_tibble() |> 
-    janitor::clean_names()
+    janitor::clean_names() |> 
+    rename(mannfjoldi = mannfjoldi_eftir_sveitarfelagi_kyni_og_aldri_1_januar_1998_2022) |> 
+    mutate(ar = parse_number(ar)) |> 
+    filter(sveitarfelag != "Alls") |> 
+    select(sveitarfelag, aldur, ar, mannfjoldi) |> 
+    mutate(sveitarfelag = fct_recode(sveitarfelag,
+                                     "Akureyrarkaupstaður" = "Akureyrarbær"))
 ```
 
+# Hlutfall barna á leikskólaaldri
 
-```{r, fig.width = 12, fig.asp = 1, out.width = "100%"}
-plot_dat <- mannfjoldi |> 
-    rename(mannfjoldi = mannfjoldi_eftir_byggdakjornum_kyni_og_aldri_1_januar_2001_2022,
-           stadur = byggdakjarnar) |> 
-    mutate(aldur = str_replace(aldur, "Á 1. ári", "Á fyrsta ári"),
-           ar = parse_number(ar) - 1) |> 
-    select(-kyn) |> 
+## Eftir sveitarfélagi
+
+### Eftir aldurshóp
+
+```{r, fig.width = 12, fig.asp = 0.6, out.width = "100%"}
+pred_d <- mannfjoldi |> 
+    rename(stadur = sveitarfelag) |> 
+    mutate(aldur = str_replace(aldur, "Á 1. ári", "Á fyrsta ári") |> str_trim() |> as_factor(),
+           ar = ar - 1) |>  
     inner_join(d, 
                by = c("stadur", "ar", "aldur")) |> 
-    mutate(hlutf = n / mannfjoldi,
-           aldur = as_factor(aldur) |> fct_relevel("Á fyrsta ári")) |> 
-    filter(aldur != "Á fyrsta ári")
+    group_by(stadur) |> 
+    group_nest() |> 
+    mutate(model = map(data, ~ gam(n ~ s(ar, bs = "cr", by = aldur) + aldur, offset = log(mannfjoldi), family = nb(), data = .x)),
+           preds = map(model, augment, type.predict = "response"))
+
+plot_dat <- pred_d |> 
+    unnest(preds) |> 
+    filter(aldur != "Á fyrsta ári", ar >= 2000, stadur != "Fjarðabyggð") |> 
+    mutate(hlutf = n / exp(`(offset)`))
+
 
 p <- plot_dat |> 
-    ggplot(aes(ar, hlutf)) +
-    geom_line(data = plot_dat |> rename(std = stadur), aes(group = std), alpha = 0.5) +
+    ggplot(aes(ar, .fitted)) +
+    geom_line(data = plot_dat |> rename(std = stadur), 
+              aes(group = std), size = 0.5, alpha = 0.3, col = "grey50") +
     geom_line(aes(col = stadur), size = 1) +
-    geom_point(aes(col = stadur), size = 2) +
+    geom_point(aes(col = stadur, y = hlutf), size = 1) +
     geom_hline(yintercept = 1, lty = 2) +
-    scale_x_continuous(breaks = c(2005, 2010, 2015, 2020),
-                       limits = c(2000, 2020.5)) +
+    scale_x_continuous(breaks = c(2005, 2010, 2015, 2020), limits = c(NA, 2020.5)) +
     scale_y_continuous(labels = label_percent(),
                        breaks = c(0, 0.25, 0.5, 0.75, 1),
-                       limits = c(0, 1.3)) +
-    scale_colour_brewer(type = "qual", palette = "Set1") +
+                       limits = c(NA, NA)) +
+    scale_colour_brewer(type = "qual", palette = "Dark2") +
     facet_grid(aldur ~ stadur) +
     coord_cartesian(expand = FALSE) +
     theme_half_open() +
@@ -118,401 +146,582 @@ p <- plot_dat |>
 p
 
 ggsave(plot = p, filename = "hlutfall_baer_aldur.png",
-       height = 8, width = 8, scale = 2, bg = "white")
+       width = 8, height = 0.6 * 8,  scale = 2, bg = "white")
 ```
 
-## Reykjavík vs. önnur bæjarfélög á höfuðborgarsvæði
+### 12 - 23 mánaða (1 árs)
 
-```{r}
-d1 <- pxweb_get(
-    url ="https://px.hagstofa.is:443/pxis/api/v1/is/Samfelag/skolamal/1_leikskolastig/0_lsNemendur/SKO01101.px", 
-    query = list(
-        "Ár" = c("*"),
-        "Fjöldi"  = c("*"),
-        "Landsvæði" = c("1", "2", "3"),
-        "Kyn" = c("0"),
-        "Aldur" = c("*")
-    ),
-    verbose = FALSE
-) |> 
-    as.data.frame() |> 
-    as_tibble() |> 
-    janitor::clean_names() |> 
-    filter(aldur != "Alls") |> 
-    rename(value = born_i_leikskolum_eftir_aldri_kyni_og_landsvaedum_1998_2020) |> 
-    mutate(ar = parse_number(ar),
-           aldur = ifelse(str_detect(aldur, "Á fy"), "0", aldur) |> parse_number()) |> 
-    select(-kyn) 
+```{r, fig.width = 12, fig.asp = 0.4, out.width = "100%"}
+plot_dat <- pred_d |> 
+    select(-data, -model) |> 
+    unnest(preds) |> 
+    filter(aldur == "1 árs", ar >= 2000, stadur != "Fjarðabyggð") |> 
+    mutate(mannfjoldi = exp(`(offset)`),
+           hlutf = n / mannfjoldi) |> 
+    select(stadur, ar, aldur, n, mannfjoldi, .fitted, hlutf)
+
+
+p <- plot_dat |> 
+    ggplot(aes(ar, .fitted)) +
+    geom_line(data = plot_dat |> rename(std = stadur), 
+              aes(group = std), size = 0.5, alpha = 0.3, col = "grey50") +
+    geom_line(aes(col = stadur), size = 1) +
+    geom_point(aes(col = stadur, y = hlutf), size = 1) +
+    geom_hline(yintercept = 1, lty = 2) +
+    scale_x_continuous(breaks = c(2005, 2010, 2015, 2020), limits = c(NA, 2020.5)) +
+    scale_y_continuous(labels = label_percent(),
+                       breaks = c(0, 0.25, 0.5, 0.75, 1),
+                       limits = c(NA, NA)) +
+    scale_colour_brewer(type = "qual", palette = "Dark2") +
+    facet_wrap("stadur", nrow = 2) +
+    coord_cartesian(expand = FALSE) +
+    theme_half_open() +
+    theme(legend.position = "none",
+          plot.margin = margin(t = 5, r = 15, b = 5, l = 5)) +
+    labs(x = NULL,
+         y = NULL,
+         title = "Hlutfall barna á aldrinum 12 - 23 mánaða með leikskólapláss eftir aldri",
+         subtitle = "Reiknað sem fjöldi barna í leikskóla deilt með fjölda barna í viðeigandi árgangi",
+         caption = "Kóði og gögn: https://github.com/bgautijonsson/leikskolar")
+
+p
+
+ggsave(plot = p, filename = "hlutfall_baer_1ars.png",
+       width = 8, height = 0.5 * 8,  scale = 2, bg = "white")
 ```
 
+### Heildarfjöldi
 
-```{r}
-d2 <- pxweb_get(
-    url ="https://px.hagstofa.is:443/pxis/api/v1/is/Samfelag/skolamal/1_leikskolastig/0_lsNemendur/SKO01102.px", 
-    query = list(
-        "Ár" = c("*"),
-        "Viðvera"  = c("*"),
-        "Landsvæði" = c("1", "2", "3"),
-        "Kyn" = c("0"),
-        "Aldur" = c("*")
-    ),
-    verbose = FALSE
-) |> 
-    as.data.frame() |> 
-    as_tibble() |> 
-    janitor::clean_names() |> 
-    filter(aldur != "Alls") |> 
-    rename(value = born_i_leikskolum_eftir_kyni_aldri_landsvaedum_og_lengd_vidveru_1998_2040) |> 
-    mutate(ar = parse_number(ar),
-           aldur = ifelse(str_detect(aldur, "Á fy"), "0", aldur) |> parse_number()) |> 
-    select(-kyn) |> 
-    pivot_wider(names_from = vidvera, values_from = value) |> 
-    janitor::clean_names() |> 
-    pivot_longer(c(-ar, -landsvaedi, -aldur, -alls), names_to = "vidvera") |> 
-    mutate(vidvera = parse_number(vidvera)) |> 
-    group_by(ar,landsvaedi, aldur) |> 
-    mutate(alls2 = sum(value),
-           hlutf = value / alls2) |> 
+```{r, fig.width = 12, fig.asp = 0.5, out.width = "100%"}
+plot_dat <- pred_d |> 
+    select(-data, -model) |> 
+    unnest(preds) |> 
+    filter(ar >= 2000, stadur != "Fjarðabyggð", aldur != "Á fyrsta ári") |> 
+    group_by(stadur, ar) |> 
+    summarise(n = sum(n),
+              mannfjoldi = sum(exp(`(offset)`)),
+              hlutf = n / mannfjoldi,
+              .fitted = sum(.fitted * exp(`(offset)`)) / mannfjoldi,
+              .groups = "drop")
+
+
+p <- plot_dat |> 
+    ggplot(aes(ar, .fitted)) +
+    geom_line(data = plot_dat |> rename(std = stadur), 
+              aes(group = std), size = 0.5, alpha = 0.3, col = "grey50") +
+    geom_line(aes(col = stadur), size = 1) +
+    geom_point(aes(col = stadur, y = hlutf), size = 1) +
+    geom_hline(yintercept = 1, lty = 2) +
+    scale_x_continuous(breaks = c(2005, 2010, 2015, 2020), limits = c(NA, 2020.5)) +
+    scale_y_continuous(labels = label_percent(),
+                       breaks = c(0, 0.25, 0.5, 0.75, 1),
+                       limits = c(0.5, NA)) +
+    scale_colour_brewer(type = "qual", palette = "Dark2") +
+    facet_wrap("stadur", nrow = 2) +
+    coord_cartesian(expand = FALSE) +
+    theme_half_open() +
+    theme(legend.position = "none",
+          plot.margin = margin(t = 5, r = 15, b = 5, l = 5)) +
+    labs(x = NULL,
+         y = NULL,
+         title = "Hlutfall barna á aldrinum 1 - 5 ára með leikskólapláss eftir aldri",
+         subtitle = "Reiknað sem fjöldi barna í leikskóla deilt með fjölda barna í viðeigandi árgangi",
+         caption = "Kóði og gögn: https://github.com/bgautijonsson/leikskolar")
+
+p
+
+ggsave(plot = p, filename = "hlutfall_baer_heild.png",
+       width = 8, height = 0.5 * 8,  scale = 2, bg = "white")
+```
+
+# Hlutfalslleg aukning plássa og barna
+
+## Pláss
+
+```{r, fig.width = 12, fig.asp = 0.5, out.width = "100%"}
+plot_dat <- d |> 
+    semi_join(
+        mannfjoldi |> rename(stadur = sveitarfelag),
+        by = "stadur"
+    ) |> 
+    filter(stadur != "Fjarðabyggð", ar >= 2010) |> 
+    count(stadur, ar, wt = n) |> 
+    group_by(stadur) |> 
+    mutate(hlutf_aukning = n / n[ar == min(ar)]) |> 
     ungroup() |> 
-    select(ar, landsvaedi,  aldur, vidvera, hlutf) |> 
-    arrange(desc(ar), aldur, landsvaedi, vidvera)
-```
+    filter(ar == 2020) |> 
+    mutate(stadur1 = fct_reorder(stadur, hlutf_aukning))
 
-### Öll börn
-
-#### Hlutfall á leikskólaaldri með pláss
-
-```{r,  fig.width = 8, fig.asp = 0.5, out.width = "100%"}
-p <- d1 |> 
-    filter(aldur > 0, landsvaedi != "Höfuðborgarsvæði") |> 
-    pivot_wider(names_from = fjoldi, values_from = value) |> 
-    janitor::clean_names() |> 
-    mutate(staerd_argangs = fjoldi / (hlutfall_af_argangi / 100)) |> 
-    group_by(ar, landsvaedi) |> 
-    summarise(hlutf = sum(fjoldi) / sum(staerd_argangs) * 100,
-              .groups = "drop") |> 
-    ggplot(aes(ar, hlutf, fill = landsvaedi)) +
-    geom_area(position = "identity", alpha = 0.6) +
-    scale_y_continuous(labels = label_number(suffix = "%"),
-                       limits = c(0, 100)) +
-    scale_fill_brewer(type ="qual", palette = "Set1") +
-    coord_cartesian(expand = FALSE) +
-    theme_half_open() +
+p <- plot_dat |> 
+    ggplot(aes(stadur1, hlutf_aukning)) +
+    geom_hline(yintercept = 1, lty = 2, alpha = 0.5) +
+    geom_col(aes(fill = stadur), alpha = 0.8) +
+    geom_rangeframe() +
+    scale_y_log10(labels = function(x) percent(x - 1),
+                  breaks = c(round(plot_dat$hlutf_aukning, 2)),
+                  limits = c(NA, max(plot_dat$hlutf_aukning))) +
+    scale_fill_brewer(type = "qual", palette = "Dark2") +
     labs(x = NULL,
          y = NULL,
-         fill = NULL,
-         lty = NULL,
-         col = NULL,
-         title = "Hlutfall barna á leikskólaaldri sem hafa leikskólapláss í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>",
-         subtitle = "Reiknað sem fjöldi leikskólaplássa deilt með fjölda barna 1 - 5 ára.") +
+         title = "Hlutfallsleg breyting á fjölda leikskólaplássa eftir sveitarfélagi (frá 2010 til 2020)") +
+    theme_tufte(base_size = 13) +
     theme(legend.position = "none",
-          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
-          plot.title = element_markdown())
+          axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1))
 
 p
 
-ggsave(plot = p, filename = here("hlutfall_alls.png"),
-       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+ggsave(plot = p, filename = "hlutf_breyting_leikskolaplass.png",
+       width = 8, height = 0.5 * 8,  scale = 2, bg = "white")
 ```
 
-#### Fjöldi leikskólaplássa
+## Börn
 
-```{r,  fig.width = 8, fig.asp = 0.5, out.width = "100%"}
-p <- d1 |> 
-    filter(fjoldi == "Fjöldi", landsvaedi != "Höfuðborgarsvæði") |> 
-    count(ar, landsvaedi, wt = value) |> 
-    mutate(landsvaedi = fct_relevel(landsvaedi, "Reykjavík")) |> 
-    ggplot(aes(ar, n, fill = landsvaedi)) +
-    geom_area(position = "identity", alpha = 0.5) +
-    scale_fill_brewer(type ="qual", palette = "Set1", direction = -1) +
-    coord_cartesian(expand = FALSE) +
-    theme_half_open() +
-    labs(x = NULL,
-         y = NULL,
-         fill = NULL,
-         lty = NULL,
-         col = NULL,
-         title = "Fjöldi plássa í leikskólum í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>") +
-    theme(legend.position = "none",
-          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
-          plot.title = element_markdown())
-
-p
-
-ggsave(plot = p, filename = here("fjoldi_plass_alls.png"),
-       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
-```
-
-#### Fjöldi á leikskólaaldri
-
-```{r, fig.width = 8, fig.asp = 0.5, out.width = "100%"}
-p <- d1 |> 
-    filter(aldur > 0, landsvaedi != "Höfuðborgarsvæði") |> 
-    pivot_wider(names_from = fjoldi, values_from = value) |> 
-    janitor::clean_names() |> 
-    mutate(staerd_argangs = fjoldi / (hlutfall_af_argangi / 100)) |> 
-    count(ar, landsvaedi, wt = staerd_argangs) |> 
-    mutate(landsvaedi = fct_relevel(landsvaedi, "Reykjavík")) |> 
-    ggplot(aes(ar, n, fill = landsvaedi)) +
-    geom_area(position = "identity", alpha = 0.5) +
-    scale_fill_brewer(type ="qual", palette = "Set1", direction = -1) +
-    coord_cartesian(expand = FALSE) +
-    theme_half_open() +
-    labs(x = NULL,
-         y = NULL,
-         fill = NULL,
-         lty = NULL,
-         col = NULL,
-         title = "Fjöldi barna á leikskólaaldri í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>") +
-    theme(legend.position = "none",
-          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
-          plot.title = element_markdown())
-
-p
-
-ggsave(plot = p, filename = here("fjoldi_aldri_alls.png"),
-       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
-
-```
-
-#### Viðvera
-
-##### Per barn í árgangi
-
-```{r, fig.width = 8, fig.asp = 0.5, out.width = "100%"}
-p <- d2 |> 
-    group_by(ar, landsvaedi, aldur) |> 
-    summarise(vidvera = sum(vidvera * hlutf),
-              .groups = "drop") |> 
-    inner_join(
-        d1 |> 
-            pivot_wider(names_from = fjoldi, values_from = value) |> 
-            janitor::clean_names() |> 
-            mutate(fjoldi = fjoldi / (hlutfall_af_argangi/100)),
-        by = c("ar", "landsvaedi", "aldur")
+```{r, fig.width = 12, fig.asp = 0.5, out.width = "100%"}
+plot_dat <- mannfjoldi |> 
+    rename(stadur = sveitarfelag) |> 
+    semi_join(
+        d,
+        by = "stadur"
     ) |> 
-    filter(is.finite(fjoldi)) |> 
-    group_by(ar,landsvaedi) |> 
-    mutate(p_vidvera = vidvera * fjoldi / sum(fjoldi)) |> 
-    filter(is.finite(p_vidvera)) |> 
-    summarise(mean_vidvera = sum(p_vidvera),
-              .groups ="drop") |> 
-    filter(landsvaedi!= "Höfuðborgarsvæði") |> 
-    ggplot(aes(ar, mean_vidvera, fill = landsvaedi)) +
-    geom_area(position = "identity", alpha = 0.5) +
-    scale_y_continuous(labels = label_number(suffix = " klst"),
-                       limits = c(0, NA)) +
-    scale_fill_brewer(type ="qual", palette = "Set1") +
-    coord_cartesian(expand = FALSE) +
-    theme_half_open() +
+    filter(stadur != "Fjarðabyggð", ar >= 2010) |> 
+    count(stadur, ar, wt = mannfjoldi) |> 
+    group_by(stadur) |> 
+    mutate(hlutf_aukning = n / n[ar == min(ar)]) |>
+    ungroup() |> 
+    filter(ar == 2020) |> 
+    mutate(stadur1 = fct_reorder(stadur, hlutf_aukning))
+
+p <- plot_dat |> 
+    ggplot(aes(stadur1, hlutf_aukning)) +
+    geom_hline(yintercept = 1, lty = 2, alpha = 0.5) +
+    geom_col(aes(fill = stadur), alpha = 0.8) +
+    geom_rangeframe() +
+    scale_y_log10(labels = function(x) percent(x - 1),
+                  breaks = c(round(plot_dat$hlutf_aukning, 2)),
+                  limits = c(NA, max(plot_dat$hlutf_aukning))) +
+    scale_fill_brewer(type = "qual", palette = "Dark2") +
     labs(x = NULL,
          y = NULL,
-         fill = NULL,
-         lty = NULL,
-         col = NULL,
-         title = "Viðvera í leikskóla á dag per barn á leikskólaaldri í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>") +
+         title = "Hlutfallsleg breyting á fjölda barna á leikskólaaldri eftir sveitarfélagi (frá 2010 til 2020)") +
+    theme_tufte(base_size = 13) +
     theme(legend.position = "none",
-          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
-          plot.title = element_markdown())
+          axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1))
 
 p
 
-ggsave(plot = p, filename = here("vidvera_argangur_alls.png"),
-       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+ggsave(plot = p, filename = "hlutf_breyting_leikskolaborn.png",
+       width = 8, height = 0.5 * 8,  scale = 2, bg = "white")
 ```
 
-##### Per barn á leikskóla
+## Bæði (Heildarbreyting)
 
-```{r, fig.width = 8, fig.asp = 0.5, out.width = "100%"}
-p <- d2 |> 
-    group_by(ar, landsvaedi, aldur) |> 
-    summarise(vidvera = sum(vidvera * hlutf),
-              .groups = "drop") |> 
-    inner_join(
-        d1 |> 
-            pivot_wider(names_from = fjoldi, values_from = value) |> 
-            janitor::clean_names(),
-        by = c("ar", "landsvaedi", "aldur")
+### Frá 2010
+
+```{r, fig.width = 12, fig.asp = 0.5, out.width = "100%"}
+plot_dat <- d |> 
+    semi_join(
+        mannfjoldi |> rename(stadur = sveitarfelag),
+        by = "stadur"
     ) |> 
-    group_by(ar,landsvaedi) |> 
-    mutate(p_vidvera = vidvera * fjoldi / sum(fjoldi)) |> 
-    filter(is.finite(p_vidvera)) |> 
-    summarise(mean_vidvera = sum(p_vidvera),
-              .groups ="drop") |> 
-    filter(landsvaedi!= "Höfuðborgarsvæði") |> 
-    ggplot(aes(ar, mean_vidvera, fill = landsvaedi)) +
-    geom_area(position = "identity", alpha = 0.5) +
-    scale_y_continuous(labels = label_number(suffix = " klst"),
-                       limits = c(0, NA)) +
-    scale_fill_brewer(type ="qual", palette = "Set1") +
-    coord_cartesian(expand = FALSE) +
-    theme_half_open() +
+    filter(stadur != "Fjarðabyggð", ar >= 2010) |> 
+    count(stadur, ar, wt = n) |> 
+    group_by(stadur) |> 
+    mutate(hlutf_aukning = n / n[ar == min(ar)]) |> 
+    ungroup() |> 
+    filter(ar == 2020) |> 
+    mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+           tegund = "Leikskólapláss") |> 
+    bind_rows(
+        mannfjoldi |> 
+            rename(stadur = sveitarfelag) |> 
+            semi_join(
+                d,
+                by = "stadur"
+            ) |> 
+            filter(stadur != "Fjarðabyggð", ar >= 2010) |> 
+            count(stadur, ar, wt = mannfjoldi) |> 
+            group_by(stadur) |> 
+            mutate(hlutf_aukning = n / n[ar == min(ar)]) |>
+            ungroup() |> 
+            filter(ar == 2020) |> 
+            mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+                   tegund = "Leikskólabörn")
+    )
+
+
+
+p <- plot_dat |> 
+    ggplot(aes(stadur1, hlutf_aukning)) +
+    geom_hline(yintercept = 1, lty = 2, alpha = 0.5) +
+    geom_col(aes(fill = tegund), alpha = 0.8, position = "dodge") +
+    geom_rangeframe() +
+    scale_y_log10(labels = function(x) percent(x - 1),
+                  breaks = c(round(plot_dat$hlutf_aukning, 2))) +
+    scale_fill_brewer(type = "qual", palette = "Dark2") +
     labs(x = NULL,
          y = NULL,
          fill = NULL,
-         lty = NULL,
-         col = NULL,
-         title = "Meðalviðvera barns með leikskólapláss í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>") +
-    theme(legend.position = "none",
-          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
-          plot.title = element_markdown())
+         title = "Hlutfallsleg breyting á fjölda barna og leikskólaplássa eftir sveitarfélagi (frá 2010 til 2020)",
+         caption = "Kóði og gögn: https://github.com/bgautijonsson/leikskolar") +
+    theme_tufte(base_size = 13) +
+    theme(legend.position = "top",
+          axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1))
 
 p
 
-ggsave(plot = p, filename = here("vidvera_leikskola_alls.png"),
-       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+ggsave(plot = p, filename = "hlutf_breyting_bornogplass.png",
+       width = 8, height = 0.5 * 8,  scale = 2, bg = "white")
 ```
 
-#### Hlutfall með pláss eftir árgangi
 
-```{r, fig.width = 8,fig.asp = 0.5, out.width = "100%"}
-p <- d1 |> 
-    filter(fjoldi !="Fjöldi", landsvaedi != "Höfuðborgarsvæði",
-           ar >= 2000) |> 
-    mutate(aldur = case_when(aldur == 0 ~ "Á 1. ári",
-                             aldur == 1 ~ "1 árs",
-                             TRUE ~ str_c(aldur, " ára")) |> 
-               fct_relevel("Á 1. ári")) |> 
-    ggplot(aes(ar, value)) +
-    geom_area(aes(fill = landsvaedi), 
-              position = position_dodge(width = 0), alpha = 0.5) +
-    scale_y_continuous(limits = c(0, 100), 
-                       labels = label_number(suffix = "%"),
-                       expand = expansion()) +
-    scale_x_continuous(breaks = pretty_breaks(5),
-                       expand = expansion()) +
-    scale_fill_brewer(type = "qual", palette = "Set1") +
-    scale_colour_brewer(type = "qual", palette = "Set1") +
-    facet_wrap("aldur", scales = "free_y") +
-    labs(x = NULL,
-         y = NULL,
-         fill = NULL,
-         lty = NULL,
-         col = NULL,
-         title = "Hlutfall barna með leikskólapláss í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b> eftir aldri") +
-    theme_clean() +
-    background_grid(major  = "none" )+
-    theme(legend.position = "none",
-          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
-          plot.title = element_markdown(),
-          strip.background = element_rect(fill = "grey90"))
+#### Til 2014
 
-p
-
-ggsave(plot = p, filename = here("hlutfall_saman.png"),
-       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
-```
-
-### 12 - 24 mánaða börn
-
-#### Fjöldi barna í leikskóla
-
-```{r, fig.width = 8,fig.asp = 0.5, out.width = "100%"}
-p <- d1 |> 
-    filter(landsvaedi != "Höfuðborgarsvæði",
-           ar >= 2000, aldur == 1) |> 
-    pivot_wider(names_from = fjoldi, values_from = value) |> 
-    janitor::clean_names() |> 
-    mutate(bidlisti = fjoldi / (hlutfall_af_argangi/100) - fjoldi,
-           landsvaedi = fct_relevel(landsvaedi, "Reykjavík")) |> 
-    ggplot(aes(ar, fjoldi)) +
-    geom_area(aes(fill = landsvaedi), 
-              position = position_dodge(width = 0), alpha = 0.5) +
-    scale_y_continuous(limits = c(0, NA), 
-                       labels = label_number(suffix = ""),
-                       expand = expansion()) +
-    scale_x_continuous(breaks = pretty_breaks(5),
-                       expand = expansion()) +
-    scale_fill_brewer(type = "qual", palette = "Set1", direction = -1) +
-    labs(x = NULL,
-         y = NULL,
-         fill = NULL,
-         lty = NULL,
-         col = NULL,
-         title = "Fjöldi eins árs barna í leikskólum í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>") +
-    theme_half_open() +
-    theme(legend.position = "none",
-          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
-          plot.title = element_markdown())
-
-p
-
-ggsave(plot = p, filename = here("fjoldi_1ars.png"),
-       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
-```
-
-#### Hlutfall í leikskóla
-
-```{r, fig.width = 8,fig.asp = 0.5, out.width = "100%"}
-p  <- d1 |> 
-    filter(fjoldi !="Fjöldi", landsvaedi != "Höfuðborgarsvæði",
-           ar >= 2000, aldur == 1) |> 
-    ggplot(aes(ar, value)) +
-    geom_area(aes(fill = landsvaedi), 
-              position = position_dodge(width = 0), alpha = 0.5) +
-    scale_y_continuous(limits = c(0, 60), 
-                       labels = label_number(suffix = "%"),
-                       expand = expansion()) +
-    scale_x_continuous(breaks = pretty_breaks(5),
-                       expand = expansion()) +
-    scale_fill_brewer(type = "qual", palette = "Set1") +
-    scale_colour_brewer(type = "qual", palette = "Set1") +
-    labs(x = NULL,
-         y = NULL,
-         fill = NULL,
-         lty = NULL,
-         col = NULL,
-         title = "Hlutfall eins árs barna með leikskólapláss í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>") +
-    theme_half_open() +
-    theme(legend.position = "none",
-          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
-          plot.title = element_markdown())
-
-p
-
-ggsave(plot = p, filename = here("hlutfall_1ars.png"),
-       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
-```
-
-#### Viðvera per barn í árgangi
-
-```{r, fig.width = 8, fig.asp = 0.5, out.width = "100%"}
-p <- d2 |> 
-    group_by(ar, landsvaedi, aldur) |> 
-    summarise(vidvera = sum(vidvera * hlutf),
-              .groups = "drop") |> 
-    inner_join(
-        d1 |> 
-            pivot_wider(names_from = fjoldi, values_from = value) |> 
-            janitor::clean_names(),
-        by = c("ar", "landsvaedi", "aldur")
+```{r, fig.width = 12, fig.asp = 0.5, out.width = "100%"}
+plot_dat <- d |> 
+    semi_join(
+        mannfjoldi |> rename(stadur = sveitarfelag),
+        by = "stadur"
     ) |> 
-    mutate(vidvera_hlutf = vidvera * hlutfall_af_argangi / 100) |> 
-    filter(landsvaedi!= "Höfuðborgarsvæði", aldur == 1) |> 
-    ggplot(aes(ar, vidvera_hlutf, fill = landsvaedi)) +
-    geom_area(position = "identity", alpha = 0.5) +
-    scale_y_continuous(labels = label_number(suffix = " klst"),
-                       limits = c(0, 8)) +
-    scale_fill_brewer(type ="qual", palette = "Set1") +
-    coord_cartesian(expand = FALSE) +
-    theme_half_open() +
+    filter(stadur != "Fjarðabyggð", ar >= 2010, ar <= 2014) |> 
+    count(stadur, ar, wt = n) |> 
+    group_by(stadur) |> 
+    mutate(hlutf_aukning = n / n[ar == min(ar)]) |> 
+    ungroup() |> 
+    filter(ar == 2014) |> 
+    mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+           tegund = "Leikskólapláss") |> 
+    bind_rows(
+        mannfjoldi |> 
+            rename(stadur = sveitarfelag) |> 
+            semi_join(
+                d,
+                by = "stadur"
+            ) |> 
+            filter(stadur != "Fjarðabyggð", ar >= 2010) |> 
+            count(stadur, ar, wt = mannfjoldi) |> 
+            group_by(stadur) |> 
+            mutate(hlutf_aukning = n / n[ar == min(ar)]) |>
+            ungroup() |> 
+            filter(ar == 2014) |> 
+            mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+                   tegund = "Leikskólabörn")
+    )
+
+
+
+p <- plot_dat |> 
+    ggplot(aes(stadur1, hlutf_aukning)) +
+    geom_hline(yintercept = 1, lty = 2, alpha = 0.5) +
+    geom_col(aes(fill = tegund), alpha = 0.8, position = "dodge") +
+    geom_rangeframe() +
+    scale_y_log10(labels = function(x) percent(x - 1),
+                  breaks = c(round(plot_dat$hlutf_aukning, 2))) +
+    scale_fill_brewer(type = "qual", palette = "Dark2") +
     labs(x = NULL,
          y = NULL,
          fill = NULL,
-         lty = NULL,
-         col = NULL,
-         title = "Viðvera á dag per barn í árgangi (12-24 mánaða) í leikskólum í <b style='color:#377eb8'>Reykjavík</b> og <b style='color:#e41a1c'>öðrum sveitarfélögum höfuðborgarsvæðis</b>",
-         subtitle = "Meðalbarn utan Reykjavíkur var að jafnaði 30 mín lengra í leikskóla en meðalbarn innan Reykjavíkur árið 2020 (að því gefnu að leikskólaviðvera væri jafndreifð yfir öll börn).") +
-    theme(legend.position = "none",
-          plot.margin = margin(t = 5, r = 15, b = 5, l =5),
-          plot.title = element_markdown())
+         title = "Hlutfallsleg breyting á fjölda barna og leikskólaplássa eftir sveitarfélagi (frá 2010 til 2014)",
+         caption = "Kóði og gögn: https://github.com/bgautijonsson/leikskolar") +
+    theme_tufte(base_size = 13) +
+    theme(legend.position = "top",
+          axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1))
 
 p
 
-ggsave(plot = p, filename = here("vidvera_1ars.png"),
-       width = 8, height = 0.5 * 8, scale = 2, bg = "white")
+ggsave(plot = p, filename = "hlutf_breyting_bornogplass_2010_til_2014.png",
+       width = 8, height = 0.5 * 8,  scale = 2, bg = "white")
 ```
 
+### Frá 2014
+
+```{r, fig.width = 12, fig.asp = 0.5, out.width = "100%"}
+plot_dat <- d |> 
+    semi_join(
+        mannfjoldi |> rename(stadur = sveitarfelag),
+        by = "stadur"
+    ) |> 
+    filter(stadur != "Fjarðabyggð", ar >= 2014) |> 
+    count(stadur, ar, wt = n) |> 
+    group_by(stadur) |> 
+    mutate(hlutf_aukning = n / n[ar == min(ar)]) |> 
+    ungroup() |> 
+    filter(ar == 2020) |> 
+    mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+           tegund = "Leikskólapláss") |> 
+    bind_rows(
+        mannfjoldi |> 
+            rename(stadur = sveitarfelag) |> 
+            semi_join(
+                d,
+                by = "stadur"
+            ) |> 
+            filter(stadur != "Fjarðabyggð", ar >= 2010) |> 
+            count(stadur, ar, wt = mannfjoldi) |> 
+            group_by(stadur) |> 
+            mutate(hlutf_aukning = n / n[ar == min(ar)]) |>
+            ungroup() |> 
+            filter(ar == 2020) |> 
+            mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+                   tegund = "Leikskólabörn")
+    )
+
+
+
+p <- plot_dat |> 
+    ggplot(aes(stadur1, hlutf_aukning)) +
+    geom_hline(yintercept = 1, lty = 2, alpha = 0.5) +
+    geom_col(aes(fill = tegund), alpha = 0.8, position = "dodge") +
+    geom_rangeframe() +
+    scale_y_log10(labels = function(x) percent(x - 1),
+                  breaks = c(round(plot_dat$hlutf_aukning, 2))) +
+    scale_fill_brewer(type = "qual", palette = "Dark2") +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         title = "Hlutfallsleg breyting á fjölda barna og leikskólaplássa eftir sveitarfélagi (frá 2014 til 2020)",
+         caption = "Kóði og gögn: https://github.com/bgautijonsson/leikskolar") +
+    theme_tufte(base_size = 13) +
+    theme(legend.position = "top",
+          axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1))
+
+p
+
+ggsave(plot = p, filename = "hlutf_breyting_bornogplass_2014.png",
+       width = 8, height = 0.5 * 8,  scale = 2, bg = "white")
+```
+
+
+#### Til 2018
+
+```{r, fig.width = 12, fig.asp = 0.5, out.width = "100%"}
+plot_dat <- d |> 
+    semi_join(
+        mannfjoldi |> rename(stadur = sveitarfelag),
+        by = "stadur"
+    ) |> 
+    filter(stadur != "Fjarðabyggð", ar >= 2014, ar <= 2018) |> 
+    count(stadur, ar, wt = n) |> 
+    group_by(stadur) |> 
+    mutate(hlutf_aukning = n / n[ar == min(ar)]) |> 
+    ungroup() |> 
+    filter(ar == 2018) |> 
+    mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+           tegund = "Leikskólapláss") |> 
+    bind_rows(
+        mannfjoldi |> 
+            rename(stadur = sveitarfelag) |> 
+            semi_join(
+                d,
+                by = "stadur"
+            ) |> 
+            filter(stadur != "Fjarðabyggð", ar >= 2014) |> 
+            count(stadur, ar, wt = mannfjoldi) |> 
+            group_by(stadur) |> 
+            mutate(hlutf_aukning = n / n[ar == min(ar)]) |>
+            ungroup() |> 
+            filter(ar == 2018) |> 
+            mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+                   tegund = "Leikskólabörn")
+    )
+
+
+
+p <- plot_dat |> 
+    ggplot(aes(stadur1, hlutf_aukning)) +
+    geom_hline(yintercept = 1, lty = 2, alpha = 0.5) +
+    geom_col(aes(fill = tegund), alpha = 0.8, position = "dodge") +
+    geom_rangeframe() +
+    scale_y_log10(labels = function(x) percent(x - 1),
+                  breaks = c(round(plot_dat$hlutf_aukning, 2))) +
+    scale_fill_brewer(type = "qual", palette = "Dark2") +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         title = "Hlutfallsleg breyting á fjölda barna og leikskólaplássa eftir sveitarfélagi (frá 2014 til 2018)",
+         caption = "Kóði og gögn: https://github.com/bgautijonsson/leikskolar") +
+    theme_tufte(base_size = 13) +
+    theme(legend.position = "top",
+          axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1))
+
+p
+
+ggsave(plot = p, filename = "hlutf_breyting_bornogplass_2014_til_2018.png",
+       width = 8, height = 0.5 * 8,  scale = 2, bg = "white")
+```
+
+### Frá 2016
+
+```{r, fig.width = 12, fig.asp = 0.5, out.width = "100%"}
+plot_dat <- d |> 
+    semi_join(
+        mannfjoldi |> rename(stadur = sveitarfelag),
+        by = "stadur"
+    ) |> 
+    filter(stadur != "Fjarðabyggð", ar >= 2016) |> 
+    count(stadur, ar, wt = n) |> 
+    group_by(stadur) |> 
+    mutate(hlutf_aukning = n / n[ar == min(ar)]) |> 
+    ungroup() |> 
+    filter(ar == 2020) |> 
+    mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+           tegund = "Leikskólapláss") |> 
+    bind_rows(
+        mannfjoldi |> 
+            rename(stadur = sveitarfelag) |> 
+            semi_join(
+                d,
+                by = "stadur"
+            ) |> 
+            filter(stadur != "Fjarðabyggð", ar >= 2016) |> 
+            count(stadur, ar, wt = mannfjoldi) |> 
+            group_by(stadur) |> 
+            mutate(hlutf_aukning = n / n[ar == min(ar)]) |>
+            ungroup() |> 
+            filter(ar == 2020) |> 
+            mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+                   tegund = "Leikskólabörn")
+    )
+
+
+
+p <- plot_dat |> 
+    ggplot(aes(stadur1, hlutf_aukning)) +
+    geom_hline(yintercept = 1, lty = 2, alpha = 0.5) +
+    geom_col(aes(fill = tegund), alpha = 0.8, position = "dodge") +
+    geom_rangeframe() +
+    scale_y_log10(labels = function(x) percent(x - 1),
+                  breaks = c(round(plot_dat$hlutf_aukning, 2))) +
+    scale_fill_brewer(type = "qual", palette = "Dark2") +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         title = "Hlutfallsleg breyting á fjölda barna og leikskólaplássa eftir sveitarfélagi (frá 2016 til 2020)",
+         caption = "Kóði og gögn: https://github.com/bgautijonsson/leikskolar") +
+    theme_tufte(base_size = 13) +
+    theme(legend.position = "top",
+          axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1))
+
+p
+
+ggsave(plot = p, filename = "hlutf_breyting_bornogplass_2016.png",
+       width = 8, height = 0.5 * 8,  scale = 2, bg = "white")
+```
+
+### Frá 2018
+
+```{r, fig.width = 12, fig.asp = 0.5, out.width = "100%"}
+plot_dat <- d |> 
+    semi_join(
+        mannfjoldi |> rename(stadur = sveitarfelag),
+        by = "stadur"
+    ) |> 
+    filter(stadur != "Fjarðabyggð", ar >= 2018) |> 
+    count(stadur, ar, wt = n) |> 
+    group_by(stadur) |> 
+    mutate(hlutf_aukning = n / n[ar == min(ar)]) |> 
+    ungroup() |> 
+    filter(ar == 2020) |> 
+    mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+           tegund = "Leikskólapláss") |> 
+    bind_rows(
+        mannfjoldi |> 
+            rename(stadur = sveitarfelag) |> 
+            semi_join(
+                d,
+                by = "stadur"
+            ) |> 
+            filter(stadur != "Fjarðabyggð", ar >= 2018) |> 
+            count(stadur, ar, wt = mannfjoldi) |> 
+            group_by(stadur) |> 
+            mutate(hlutf_aukning = n / n[ar == min(ar)]) |>
+            ungroup() |> 
+            filter(ar == 2020) |> 
+            mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+                   tegund = "Leikskólabörn")
+    )
+
+
+
+p <- plot_dat |> 
+    ggplot(aes(stadur1, hlutf_aukning)) +
+    geom_hline(yintercept = 1, lty = 2, alpha = 0.5) +
+    geom_col(aes(fill = tegund), alpha = 0.8, position = "dodge") +
+    geom_rangeframe() +
+    scale_y_log10(labels = function(x) percent(x - 1),
+                  breaks = c(round(plot_dat$hlutf_aukning, 2))) +
+    scale_fill_brewer(type = "qual", palette = "Dark2") +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         title = "Hlutfallsleg breyting á fjölda barna og leikskólaplássa eftir sveitarfélagi (frá 2018 til 2020)",
+         caption = "Kóði og gögn: https://github.com/bgautijonsson/leikskolar") +
+    theme_tufte(base_size = 13) +
+    theme(legend.position = "top",
+          axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1))
+
+p
+
+ggsave(plot = p, filename = "hlutf_breyting_bornogplass_2018.png",
+       width = 8, height = 0.5 * 8,  scale = 2, bg = "white")
+```
+
+#### Til 2022
+
+```{r, fig.width = 12, fig.asp = 0.5, out.width = "100%"}
+plot_dat <- d |> 
+    semi_join(
+        mannfjoldi |> rename(stadur = sveitarfelag),
+        by = "stadur"
+    ) |> 
+    filter(stadur != "Fjarðabyggð", ar >= 2018, ar <= 2020) |> 
+    count(stadur, ar, wt = n) |> 
+    group_by(stadur) |> 
+    mutate(hlutf_aukning = n / n[ar == min(ar)]) |> 
+    ungroup() |> 
+    filter(ar == 2020) |> 
+    mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+           tegund = "Leikskólapláss") |> 
+    bind_rows(
+        mannfjoldi |> 
+            rename(stadur = sveitarfelag) |> 
+            semi_join(
+                d,
+                by = "stadur"
+            ) |> 
+            filter(stadur != "Fjarðabyggð", ar >= 2018) |> 
+            count(stadur, ar, wt = mannfjoldi) |> 
+            group_by(stadur) |> 
+            mutate(hlutf_aukning = n / n[ar == min(ar)]) |>
+            ungroup() |> 
+            filter(ar == 2020) |> 
+            mutate(stadur1 = fct_reorder(stadur, hlutf_aukning),
+                   tegund = "Leikskólabörn")
+    )
+
+
+
+p <- plot_dat |> 
+    ggplot(aes(stadur1, hlutf_aukning)) +
+    geom_hline(yintercept = 1, lty = 2, alpha = 0.5) +
+    geom_col(aes(fill = tegund), alpha = 0.8, position = "dodge") +
+    geom_rangeframe() +
+    scale_y_log10(labels = function(x) percent(x - 1),
+                  breaks = c(round(plot_dat$hlutf_aukning, 2))) +
+    scale_fill_brewer(type = "qual", palette = "Dark2") +
+    labs(x = NULL,
+         y = NULL,
+         fill = NULL,
+         title = "Hlutfallsleg breyting á fjölda barna og leikskólaplássa eftir sveitarfélagi (frá 2018 til 2020)",
+         caption = "Kóði og gögn: https://github.com/bgautijonsson/leikskolar") +
+    theme_tufte(base_size = 13) +
+    theme(legend.position = "top",
+          axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1))
+
+p
+
+ggsave(plot = p, filename = "hlutf_breyting_bornogplass_2018_til_2020.png",
+       width = 8, height = 0.5 * 8,  scale = 2, bg = "white")
+```
 
 # Stöðugildi osf
 
@@ -563,7 +772,6 @@ leiksk_svfel <- read_excel("tenging-leikskolaraa.xlsx", sheet = "Stöðugildi",
         by = c("stadur", "ar")
     ) |> 
     mutate(ar = parse_number(ar))
-
 leiksk_einka <- read_excel("tenging-leikskolaraa.xlsx", sheet = "Stöðugildi", 
                            range = "F24:X27", col_names = as.character(2002:2020)) |> 
     mutate(stadur = c("Reykjavík", 
@@ -607,7 +815,6 @@ leiksk <- leiksk_svfel |>
                    teg = "Einkarekinn") |> 
             select(stadur, ar, teg, born_per_igildi)
     )
-
 p <- leiksk |> 
     ggplot(aes(ar, born_per_igildi, col = stadur, group = stadur)) +
     geom_line(data = leiksk |> rename(std = stadur, tg = teg), inherit.aes = FALSE,
@@ -629,3 +836,25 @@ p
 ggsave(plot = p, filename = "born_per_stodugildi.png",
        width = 8, height = 0.5 * 8, scale = 2, bg = "white")
 ```
+
+
+
+```{r}
+mannfjoldi |> 
+    rename(stadur = sveitarfelag) |> 
+    filter(aldur %in% c("Á 1. ári", "1 árs"))
+    mutate(aldur = str_replace(aldur, "Á 1. ári", "Á fyrsta ári") |> str_trim() |> as_factor(),
+           ar = ar - 1)
+    inner_join(d, 
+               by = c("stadur", "ar", "aldur")) |> 
+    filter(stadur == "Garðabær", aldur %in% c("1 árs"), ar >= 2018) |> 
+    arrange(ar, aldur) |> 
+    crossing(manudur = 1:12) |> 
+    mutate(weight = 1 - (manudur - 1) / 11,
+           n_weighted = n * weight,
+           date = ymd(str_c(ar, "-", str_pad(manudur, width = 2, side = "left", pad = "0"), "-01"))) |> 
+    ggplot(aes(date, n_weighted)) +
+    geom_line() +
+    labs(title = "Fjöldi 1 árs barna í leikskóla")
+```
+
